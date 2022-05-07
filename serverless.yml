@@ -1,0 +1,74 @@
+# Name of our service
+service: automate-tag-ebs-new-attachment
+
+# The required version of serverless we have to be using for this to work
+frameworkVersion: ">=3.7.1"
+
+##############################
+# Our service provider and runtime/region definitions
+##############################
+provider:
+  name: aws                       # Which provider to use
+  description: "Tag automatique de volume EBS nouvellement attaché"
+  stage: ${opt:stage, 'dev'}      # Which stage to deploy to
+  runtime: python3.9              # Which Lambda runtime to use
+  logRetentionInDays: 30          # How many days we want to maintain logs in CloudWatch
+  region: 'eu-west-3'             # Which AWS region to deploy in, eu-west-1 by default, but overridable
+  memorySize: 128                 # In megabytes, 128 minimum in 64MB increments
+  timeout: 300                    # In seconds
+  versionFunctions:  true         # We want to version our functions so we can revert if we need to
+  cfLogs: true                    # This allows us to customize our expiration time of our CloudWatch Log Buckets
+  environment:
+    DEFAULT_RETENTION_TIME: "7"                  # This is the number of days by default to store AMIs for
+    LIMIT_TO_REGIONS: "eu-west-3"                         # Use this to limit what region(s) you'd like this lambda to scan.  Comma-delimited, by default scan all regions.  Put in eg: "eu-west-1" here
+    DRY_RUN: "false"                             # If this env variable is set to true it will only print what it would do, not actually do it
+    KEY_TO_TAG_ON: "AWSAutomatedDailySnapshots"  # This is the key we will scan for to detect if this script is managing a snapshot, by default this is "AWSAutomatedDailySnapshots".  Warning: the first version of this plugin had this value at: FarleysBackupInstanceRotater but it has since changed.  Please go manually delete any AMIs with the old name
+  iamRoleStatements:
+  # We must be able to do what this script needs to do... 
+  - Effect: Allow
+    Action:
+      - ec2:DescribeInstances
+      - ec2:CreateTags
+      - sns:Publish
+    Resource: "*"
+
+##############################
+# Our function definition
+# https://www.serverless.com/framework/docs/providers/aws/events/event-bridge
+##############################
+functions:
+  execute_handler:
+    description: Tag automatique de volume EBS nouvellement attaché
+    handler: lambda.lambda_handler
+    environment:
+      TABLE_NAME: tableName
+      sns_arn: arn:aws:sns:eu-west-3:xxxxxx:notifications
+      account_alias: operations
+    events:
+      - eventBridge:
+          pattern:
+            source:
+              - aws.ec2
+            detail-type:
+              - AWS API Call via CloudTrail
+            detail:
+              eventSource:
+                - ec2.amazonaws.com
+              eventName:
+                - AttachVolume
+          inputTransformer:
+            inputPathsMap:
+              instance_id: '$.detail.requestParameters.instanceId'
+              volume_id: '$.detail.requestParameters.volumeId'
+            inputTemplate: '{"Le volume" <volume_id> "vient d'être rattaché à l'instance" <instance_id>}'
+
+##############################
+package:
+  exclude:
+    - ".DS_Store"
+    - ".git"
+    - ".gitignore"
+    - ".serverless"
+    - "requirements.txt"
+    - "**.md"
+    - "*.png"
